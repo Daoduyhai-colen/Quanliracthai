@@ -1,87 +1,73 @@
--- 1. Tạo Database
-IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'QuanLyRacThai')
+USE master;
+GO
+
+-- 1. Dọn dẹp Database cũ (Nếu có)
+IF EXISTS (SELECT * FROM sys.databases WHERE name = 'WasteManagementDB')
 BEGIN
-    CREATE DATABASE QuanLyRacThai;
+    ALTER DATABASE WasteManagementDB SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE WasteManagementDB;
 END
 GO
 
-USE QuanLyRacThai;
+-- 2. Tạo Database mới
+CREATE DATABASE WasteManagementDB;
 GO
 
--- Xóa bảng theo thứ tự (Child tables first)
-DROP TABLE IF EXISTS PickupEvent;
-DROP TABLE IF EXISTS Route;
-DROP TABLE IF EXISTS WasteSource;
-DROP TABLE IF EXISTS Vehicle;
-DROP TABLE IF EXISTS Zone;
-DROP TABLE IF EXISTS Staff;
-DROP TABLE IF EXISTS CollectionSchedule;
-DROP TABLE IF EXISTS DestinationFacility;
-DROP TABLE IF EXISTS Contractor;
-DROP TABLE IF EXISTS WasteCategory;
-DROP TABLE IF EXISTS Province;
+USE WasteManagementDB;
 GO
 
--- ① Province
+
+-- ① Bảng Tỉnh/Thành phố
 CREATE TABLE Province (
     ProvinceID INT IDENTITY(1,1) PRIMARY KEY,
     ProvinceName NVARCHAR(100) NOT NULL UNIQUE, 
     Region NVARCHAR(50) NOT NULL
 );
 
--- ② WasteCategory
+-- ② Bảng Phân loại rác
 CREATE TABLE WasteCategory (
-    CategoryID INT IDENTITY(1,1) PRIMARY KEY,
+    WasteCategoryID INT IDENTITY(1,1) PRIMARY KEY,
     CategoryName NVARCHAR(100) NOT NULL,
-    Description NVARCHAR(500), 
     HazardLevel NVARCHAR(50) NOT NULL,
     RecyclingRate INT DEFAULT 0 CHECK (RecyclingRate BETWEEN 0 AND 100)
 );
 
--- ③ DestinationFacility
+-- ③ Bảng Cơ sở xử lý rác (Điểm đến)
 CREATE TABLE DestinationFacility (
     FacilityID INT IDENTITY(1,1) PRIMARY KEY,
     FacilityName NVARCHAR(100) NOT NULL,
     FacilityType NVARCHAR(50) NOT NULL,
-    Address NVARCHAR(200),
     Capacity INT NOT NULL CHECK (Capacity > 0)
 );
 
--- ④ Contractor
+-- ④ Bảng Nhà thầu
 CREATE TABLE Contractor (
     ContractorID INT IDENTITY(1,1) PRIMARY KEY,
     ContractorName NVARCHAR(100) NOT NULL,
-    LicenseNumber VARCHAR(50) NOT NULL UNIQUE, -- Dùng VARCHAR cho mã số
-    ComplianceRating DECIMAL(3, 2) CHECK (ComplianceRating >= 0)
+    LicenseNumber VARCHAR(50) NOT NULL UNIQUE,
+    ComplianceRating DECIMAL(3, 1) CHECK (ComplianceRating >= 0)
 );
 
--- ⑤ CollectionSchedule
-CREATE TABLE CollectionSchedule (
-    ScheduleID INT IDENTITY(1,1) PRIMARY KEY,
-    Frequency NVARCHAR(50) NOT NULL,
-    DayOfWeek NVARCHAR(20) NOT NULL
-);
-
--- ⑥ Zone
+-- ⑤ Bảng Vùng (Nằm trong Tỉnh)
 CREATE TABLE Zone (
     ZoneID INT IDENTITY(1,1) PRIMARY KEY,
     ZoneName NVARCHAR(100) NOT NULL,
-    Description NVARCHAR(500),
     ProvinceID INT NOT NULL,
+    Description NVARCHAR(500),
     FOREIGN KEY (ProvinceID) REFERENCES Province(ProvinceID)
 );
 
--- ⑦ Vehicle
+-- ⑥ Bảng Xe (Thuộc Nhà thầu)
 CREATE TABLE Vehicle (
     VehicleID INT IDENTITY(1,1) PRIMARY KEY,
-    VehicleType NVARCHAR(50) NOT NULL,
-    Capacity INT NOT NULL, 
     LicensePlate VARCHAR(20) NOT NULL UNIQUE, 
     ContractorID INT NOT NULL, 
+    VehicleType NVARCHAR(50) NOT NULL,
+    Capacity INT NOT NULL, 
     FOREIGN KEY (ContractorID) REFERENCES Contractor(ContractorID)
 );
 
--- ⑧ Staff
+-- ⑦ Bảng Nhân viên (Thuộc Nhà thầu)
 CREATE TABLE Staff (
     StaffID INT IDENTITY(1,1) PRIMARY KEY,
     StaffName NVARCHAR(100) NOT NULL,
@@ -91,7 +77,17 @@ CREATE TABLE Staff (
     FOREIGN KEY (ContractorID) REFERENCES Contractor(ContractorID)
 );
 
--- ⑨ WasteSource
+-- ⑧ Bảng Tuyến đường (Nằm trong Vùng)
+CREATE TABLE Route (
+    RouteID INT IDENTITY(1,1) PRIMARY KEY,
+    RouteName NVARCHAR(100) NOT NULL,
+    ZoneID INT NOT NULL,
+    StartPoint NVARCHAR(200),
+    EndPoint NVARCHAR(200),
+    FOREIGN KEY (ZoneID) REFERENCES Zone(ZoneID)
+);
+
+-- ⑨ Bảng Nguồn thải (Nằm trong Vùng)
 CREATE TABLE WasteSource (
     WasteSourceID INT IDENTITY(1,1) PRIMARY KEY,
     SourceType NVARCHAR(100) NOT NULL,
@@ -100,36 +96,31 @@ CREATE TABLE WasteSource (
     FOREIGN KEY (ZoneID) REFERENCES Zone(ZoneID)
 );
 
--- ⑩ Route
-CREATE TABLE Route (
-    RouteID INT IDENTITY(1,1) PRIMARY KEY,
-    RouteName NVARCHAR(100) NOT NULL,
-    StartPoint NVARCHAR(200),
-    EndPoint NVARCHAR(200),
-    ZoneID INT NOT NULL,
-    FOREIGN KEY (ZoneID) REFERENCES Zone(ZoneID)
+-- ⑩ Bảng Lịch thu gom (Gán cho Nguồn thải)
+CREATE TABLE CollectionSchedule (
+    ScheduleID INT IDENTITY(1,1) PRIMARY KEY,
+    ScheduledDay NVARCHAR(40) NOT NULL,
+    Frequency NVARCHAR(50) NOT NULL,
+    WasteSourceID INT,
+    FOREIGN KEY (WasteSourceID) REFERENCES WasteSource(WasteSourceID)
 );
 
--- ⑪ PickupEvent
+-- ⑪ Bảng Sự kiện thu gom (Bảng tổng hợp cuối cùng)
 CREATE TABLE PickupEvent (
     PickupEventID INT IDENTITY(1,1) PRIMARY KEY,
     ScheduleID INT NOT NULL,
-    CategoryID INT NOT NULL,
     VehicleID INT NOT NULL,
-    FacilityID INT NOT NULL,
-    WasteSourceID INT NOT NULL,
     StaffID INT NOT NULL,
-    RouteID INT NOT NULL,
-    EventDate DATETIME NOT NULL DEFAULT GETDATE(), 
-    CollectedAmountKg INT NOT NULL CHECK (CollectedAmountKg >= 0),
+    WasteCategoryID INT NOT NULL,
+    FacilityID INT NOT NULL,
+    PickupDate DATETIME NOT NULL DEFAULT GETDATE(), 
+    CollectedAmount INT NOT NULL CHECK (CollectedAmount >= 0),
     Status NVARCHAR(50) NOT NULL,
     
     FOREIGN KEY (ScheduleID) REFERENCES CollectionSchedule(ScheduleID),
-    FOREIGN KEY (CategoryID) REFERENCES WasteCategory(CategoryID),
+    FOREIGN KEY (WasteCategoryID) REFERENCES WasteCategory(WasteCategoryID),
     FOREIGN KEY (VehicleID) REFERENCES Vehicle(VehicleID),
     FOREIGN KEY (FacilityID) REFERENCES DestinationFacility(FacilityID),
-    FOREIGN KEY (WasteSourceID) REFERENCES WasteSource(WasteSourceID),
-    FOREIGN KEY (StaffID) REFERENCES Staff(StaffID),
-    FOREIGN KEY (RouteID) REFERENCES Route(RouteID)
+    FOREIGN KEY (StaffID) REFERENCES Staff(StaffID)
 );
 GO
